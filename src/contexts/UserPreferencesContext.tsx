@@ -20,7 +20,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
   const [theme, setThemeState] = useState<'light' | 'dark'>('light');
   const [defaultPair, setDefaultPairState] = useState<TradingPair>(SUPPORTED_PAIRS[0]);
   const [defaultInterval, setDefaultIntervalState] = useState<string>('1s');
-  const [chartType, setChartTypeState] = useState<'candlestick' | 'line'>('candlestick');
+  const [chartType, setChartTypeState] = useState<'candlestick' | 'line' | 'ohlc'>('candlestick');
 
   // Load preferences from localStorage on mount
   useEffect(() => {
@@ -61,8 +61,8 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
       }
 
       // Load chart type
-      const savedChartType = localStorage.getItem(STORAGE_KEYS.CHART_TYPE) as 'candlestick' | 'line';
-      if (savedChartType && (savedChartType === 'candlestick' || savedChartType === 'line')) {
+      const savedChartType = localStorage.getItem(STORAGE_KEYS.CHART_TYPE) as 'candlestick' | 'line' | 'ohlc';
+      if (savedChartType && (savedChartType === 'candlestick' || savedChartType === 'line' || savedChartType === 'ohlc')) {
         setChartTypeState(savedChartType);
       }
     } catch (error) {
@@ -90,7 +90,7 @@ export function UserPreferencesProvider({ children }: UserPreferencesProviderPro
   };
 
   // Set chart type with persistence
-  const setChartType = (type: 'candlestick' | 'line') => {
+  const setChartType = (type: 'candlestick' | 'line' | 'ohlc') => {
     setChartTypeState(type);
     localStorage.setItem(STORAGE_KEYS.CHART_TYPE, type);
   };

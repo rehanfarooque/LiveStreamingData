@@ -20,8 +20,20 @@ const LiveTrades: React.FC<LiveTradesProps> = ({
   useEffect(() => {
     setIsLoading(true);
     setTrades([]);
+    
+    console.log(`🔄 LIVE TRADES: Subscribing to ${symbol} trades`);
 
     const handleTradeUpdate = (data: TradeData) => {
+      // CRITICAL: Only process trades for the current symbol to prevent cross-contamination
+      const tradeSymbol = data.id ? String(data.id).toUpperCase() : '';
+      console.log(`⚡ TRADE RECEIVED: ${tradeSymbol} for component ${symbol}`);
+      
+      // Verify this trade belongs to our symbol
+      if (tradeSymbol && !tradeSymbol.includes(symbol.toUpperCase())) {
+        console.log(`🚫 TRADE REJECTED: ${tradeSymbol} != ${symbol}`);
+        return;
+      }
+      
       setTrades(prevTrades => {
         const newTrades = [data, ...prevTrades];
         // Keep only the most recent trades
@@ -35,17 +47,19 @@ const LiveTrades: React.FC<LiveTradesProps> = ({
       }
     };
 
-    // Subscribe to live trades
+    // Subscribe to live trades for the specific symbol
     try {
+      console.log(`🚀 SUBSCRIBING to ${symbol} trades...`);
       webSocketManager.subscribeToTrades(symbol, handleTradeUpdate);
     } catch (error) {
-      console.warn('Live trades subscription failed:', error);
+      console.warn(`Live trades subscription failed for ${symbol}:`, error);
       setIsLoading(false);
     }
 
     return () => {
       // Cleanup - in a real app you might want to unsubscribe
       // but for now we keep the connection alive for other components
+      console.log(`🧹 CLEANUP: Live trades for ${symbol}`);
     };
   }, [symbol, maxTrades]);
 

@@ -3,12 +3,12 @@ import { Listbox, Transition } from '@headlessui/react';
 import { ChevronUpDownIcon, CheckIcon } from '@heroicons/react/20/solid';
 import { PairSelectorProps } from '@/types';
 
-const PairSelector: React.FC<PairSelectorProps> = ({ 
-  selectedPair, 
-  availablePairs, 
-  onChange 
+const PairSelector: React.FC<PairSelectorProps> = ({
+  selectedPair,
+  availablePairs,
+  onChange
 }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  // const [isOpen, setIsOpen] = useState(false);
 
   return (
     <div className="relative">

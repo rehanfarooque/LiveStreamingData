@@ -27,7 +27,7 @@ export class WebSocketManager {
   private lastConnectionAttempt = 0;
   private connectionQueue: Array<() => void> = [];
   private isProcessingQueue = false;
-  private maxConcurrentStreams = 1; // Only one stream at a time for single product focus
+  private maxConcurrentStreams = 50; // Support multi-product streaming as per memory requirements
   private connectionBackoffMs = 1000; // Reduced minimum time between connections
 
   constructor() {
@@ -39,20 +39,20 @@ export class WebSocketManager {
   }
 
   /**
-   * Connect to Binance WebSocket with improved connection management
+   * Connect to Binance WebSocket using combined streams format for multiple products
    */
   public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      // Skip if already connected to the same streams
-      if (this.isConnected()) {
-        console.log('✅ Already connected to WebSocket');
+      // Skip if already connected and streams match
+      if (this.isConnected() && this.activeStreams.size > 0) {
+        console.log('✅ Already connected with active streams');
         resolve();
         return;
       }
 
       // Skip if connection is in progress
       if (this.connectionInProgress) {
-        console.log('⏳ Connection already in progress, skipping...');
+        console.log('⏳ Connection already in progress');
         resolve();
         return;
       }
@@ -74,13 +74,13 @@ export class WebSocketManager {
           return;
         }
 
+        // Use Binance combined streams format for multiple products
         const streamsParam = allStreams.join('/');
         const wsUrl = `${this.baseUrl}?streams=${streamsParam}`;
 
-        console.log(`🚀 CONNECTING to ${allStreams.length} streams (attempt ${this.reconnectAttempts + 1})`);
-        console.log(`📡 STREAMS REQUESTED:`, allStreams);
-        console.log(`🌐 WEBSOCKET URL:`, wsUrl);
-        console.log(`🔍 MESSAGE HANDLERS READY:`, Array.from(this.messageHandlers.keys()));
+        console.log(`🚀 BINANCE COMBINED STREAMS: Connecting to ${allStreams.length} streams`);
+        console.log(`📡 STREAMS:`, allStreams);
+        console.log(`🌐 URL:`, wsUrl);
 
         // Create WebSocket with error handling
         try {
@@ -93,7 +93,7 @@ export class WebSocketManager {
           return;
         }
 
-        // Shorter connection timeout for faster feedback
+        // Connection timeout
         const connectionTimeout = setTimeout(() => {
           if (this.ws?.readyState === WebSocket.CONNECTING) {
             console.error(`⏰ WebSocket connection timeout after ${WS_CONFIG.CONNECTION_TIMEOUT}ms`);
@@ -105,7 +105,7 @@ export class WebSocketManager {
           }
         }, WS_CONFIG.CONNECTION_TIMEOUT);
 
-        // Set up event listeners with proper error handling
+        // Set up event listeners
         this.ws.onopen = () => {
           clearTimeout(connectionTimeout);
           this.connectionInProgress = false;
@@ -197,43 +197,55 @@ export class WebSocketManager {
   }
 
   /**
-   * Subscribe with trade stream for ALL crypto products real-time updates
+   * FIXED: Multi-product subscribe supporting all crypto products with proper stream management
    */
   public subscribe(symbol: string, interval: string, handler: MessageHandler): void {
     const klineStreamName = generateStreamName(symbol, interval);
     const tradeStreamName = `${symbol.toLowerCase()}@trade`;
-    const tickerStreamName = `${symbol.toLowerCase()}@ticker`;
-
-    console.log(`🚀 SUBSCRIBING TO ${symbol} ${interval}:`);
+    
+    console.log(`🚀 BINANCE SUBSCRIBE: ${symbol} ${interval}`);
     console.log(`  📈 Kline: ${klineStreamName}`);
     console.log(`  ⚡ Trade: ${tradeStreamName}`);
-    console.log(`  💰 Ticker: ${tickerStreamName}`);
 
-    // Clear all existing streams and handlers
-    this.messageHandlers.clear();
-    this.activeStreams.clear();
-    this.tradeHandlers.clear();
+    // Remove only existing streams for THIS specific symbol (not all symbols)
+    const existingStreams = Array.from(this.activeStreams);
+    const symbolStreams = existingStreams.filter(stream => {
+      const streamSymbol = stream.split('@')[0].toUpperCase();
+      return streamSymbol === symbol.toUpperCase();
+    });
+    
+    symbolStreams.forEach(stream => {
+      console.log(`🗑️ Removing old stream: ${stream}`);
+      this.messageHandlers.delete(stream);
+      this.activeStreams.delete(stream);
+    });
 
-    // Add handlers for ALL crypto products
+    // Add kline stream handler
     this.messageHandlers.set(klineStreamName, handler);
     this.activeStreams.add(klineStreamName);
-    console.log(`✅ Added kline handler for ${symbol}`);
+    console.log(`✅ Added kline: ${klineStreamName}`);
 
-    // Add trade handler for continuous updates
+    // Add trade stream handler for real-time updates
     this.messageHandlers.set(tradeStreamName, handler);
     this.activeStreams.add(tradeStreamName);
-    console.log(`✅ Added trade handler for ${symbol}`);
+    console.log(`✅ Added trade: ${tradeStreamName}`);
 
-    // Add ticker for price updates
-    this.messageHandlers.set(tickerStreamName, handler);
-    this.activeStreams.add(tickerStreamName);
-    console.log(`✅ Added ticker handler for ${symbol}`);
+    console.log(`📡 TOTAL STREAMS: ${this.activeStreams.size}`);
+    console.log(`🔍 ACTIVE STREAMS:`, Array.from(this.activeStreams));
+    console.log(`🔍 MESSAGE HANDLERS:`, Array.from(this.messageHandlers.keys()));
 
-    console.log(`📡 TOTAL ACTIVE STREAMS (${this.activeStreams.size}):`, Array.from(this.activeStreams));
-
-    // Immediate connection for real-time streaming
-    this.connect().catch(error => {
-      console.error(`❌ ${symbol} subscription failed:`, error);
+    // Connect with proper error handling
+    this.connect().then(() => {
+      console.log(`✅ ${symbol} connected successfully`);
+    }).catch(error => {
+      console.error(`❌ CONNECTION FAILED: ${symbol} -`, error.message);
+      // Retry connection after short delay
+      setTimeout(() => {
+        console.log(`🔄 Retrying connection for ${symbol}...`);
+        this.connect().catch(retryError => {
+          console.error(`❌ RETRY FAILED: ${symbol} -`, retryError.message);
+        });
+      }, 3000);
     });
   }
 
@@ -250,21 +262,32 @@ export class WebSocketManager {
   }
 
   /**
-   * Unsubscribe from stream
+   * FIXED: Unsubscribe specific symbol streams while maintaining others
    */
   public unsubscribe(symbol: string, interval: string): void {
-    const streamName = generateStreamName(symbol, interval);
-    console.log('Unsubscribing from stream:', streamName);
+    const klineStreamName = generateStreamName(symbol, interval);
+    const tradeStreamName = `${symbol.toLowerCase()}@trade`;
+    
+    console.log(`🗑️ UNSUBSCRIBING: ${symbol} ${interval}`);
+    console.log(`  📈 Removing: ${klineStreamName}`);
+    console.log(`  ⚡ Removing: ${tradeStreamName}`);
 
-    this.messageHandlers.delete(streamName);
-    this.activeStreams.delete(streamName);
+    // Remove only streams for this specific symbol
+    this.messageHandlers.delete(klineStreamName);
+    this.activeStreams.delete(klineStreamName);
+    this.messageHandlers.delete(tradeStreamName);
+    this.activeStreams.delete(tradeStreamName);
 
-    // Only disconnect if no more streams are active
+    console.log(`📡 REMAINING STREAMS: ${this.activeStreams.size}`);
+    console.log(`🔍 REMAINING:`, Array.from(this.activeStreams));
+
+    // Only disconnect if NO streams remain, otherwise reconnect with updated streams
     if (this.activeStreams.size === 0) {
-      console.log('No more active streams, disconnecting');
+      console.log('🔌 No streams remaining, disconnecting WebSocket');
       this.disconnect();
     } else {
-      // Reconnect with fewer streams
+      console.log(`🚀 Reconnecting with ${this.activeStreams.size} remaining streams`);
+      // Reconnect with updated stream list
       this.immediateConnect();
     }
   }
@@ -285,7 +308,7 @@ export class WebSocketManager {
     }
 
     this.activeStreams.add(streamName);
-    this.debouncedConnect();
+    this.immediateConnect();
   }
 
   /**
@@ -304,7 +327,66 @@ export class WebSocketManager {
     }
 
     this.activeStreams.add(streamName);
-    this.debouncedConnect();
+    this.immediateConnect();
+  }
+
+  /**
+   * BULK SUBSCRIPTION: Subscribe to multiple products at once for efficient multi-product monitoring
+   */
+  public subscribeBulk(symbols: string[], handler: MessageHandler): void {
+    console.log(`🚀 BULK SUBSCRIPTION: ${symbols.length} products`);
+
+    symbols.forEach(symbol => {
+      // Subscribe to both ticker and miniTicker for comprehensive price updates
+      const tickerStreamName = `${symbol.toLowerCase()}@ticker`;
+      const miniTickerStreamName = `${symbol.toLowerCase()}@miniTicker`;
+
+      console.log(`📈 BULK: Adding ${tickerStreamName}`);
+      console.log(`⚡ BULK: Adding ${miniTickerStreamName}`);
+
+      this.messageHandlers.set(tickerStreamName, handler);
+      this.messageHandlers.set(miniTickerStreamName, handler);
+      this.activeStreams.add(tickerStreamName);
+      this.activeStreams.add(miniTickerStreamName);
+    });
+
+    console.log(`📡 TOTAL ACTIVE STREAMS: ${this.activeStreams.size}`);
+
+    // Connect with all streams
+    this.connect().then(() => {
+      console.log(`✅ BULK: ${symbols.length} products connected successfully`);
+    }).catch(error => {
+      console.error(`❌ BULK: Connection failed:`, error);
+    });
+  }
+
+  /**
+   * BULK UNSUBSCRIPTION: Remove multiple products at once
+   */
+  public unsubscribeBulk(symbols: string[]): void {
+    console.log(`🗑️ BULK UNSUBSCRIPTION: ${symbols.length} products`);
+
+    symbols.forEach(symbol => {
+      const tickerStreamName = `${symbol.toLowerCase()}@ticker`;
+      const miniTickerStreamName = `${symbol.toLowerCase()}@miniTicker`;
+
+      this.messageHandlers.delete(tickerStreamName);
+      this.messageHandlers.delete(miniTickerStreamName);
+      this.activeStreams.delete(tickerStreamName);
+      this.activeStreams.delete(miniTickerStreamName);
+
+      console.log(`🗑️ BULK: Removed ${tickerStreamName}`);
+      console.log(`🗑️ BULK: Removed ${miniTickerStreamName}`);
+    });
+
+    console.log(`📡 REMAINING STREAMS: ${this.activeStreams.size}`);
+
+    // Reconnect with updated stream list if any streams remain
+    if (this.activeStreams.size > 0) {
+      this.immediateConnect();
+    } else {
+      this.disconnect();
+    }
   }
 
   /**
@@ -378,7 +460,7 @@ export class WebSocketManager {
   }
 
   /**
-   * Handle WebSocket message with extensive debugging
+   * Handle WebSocket message with Binance combined stream format
    */
   private handleMessage(event: MessageEvent): void {
     try {
@@ -388,19 +470,21 @@ export class WebSocketManager {
       }
 
       const data = JSON.parse(event.data);
-      console.log(`📨 Raw WebSocket message:`, data);
-
-      if (data.data && data.stream) {
-        const streamData = data.data;
+      
+      // Binance combined streams format: {"stream": "btcusdt@kline_1s", "data": {...}}
+      if (data.stream && data.data) {
         const streamName = data.stream;
-        console.log(`📺 Processing stream: ${streamName}`, streamData.e || 'unknown event');
+        const streamData = data.data;
+        
+        console.log(`📺 BINANCE STREAM: ${streamName}`, streamData.e || 'unknown event');
 
-        // Handle kline messages for ALL crypto products
+        // Handle kline messages with enhanced processing
         if (streamData.e === 'kline') {
           const message = streamData as BinanceKlineMessage;
           const handlerStreamName = generateStreamName(message.s, message.k.i);
-          console.log(`📈 Kline received: ${message.s} ${message.k.i} - looking for handler: ${handlerStreamName}`);
-          console.log(`🔍 Available handlers:`, Array.from(this.messageHandlers.keys()));
+          
+          console.log(`📈 KLINE DATA: ${message.s} ${message.k.i} - $${message.k.c} (${new Date(message.k.t).toLocaleTimeString()})`);
+          console.log(`🔍 Looking for handler: ${handlerStreamName}`);
 
           const handler = this.messageHandlers.get(handlerStreamName);
 
@@ -408,30 +492,129 @@ export class WebSocketManager {
             const candlestickData = transformKlineData(message);
             candlestickData.timestamp = message.k.t;
 
-            console.log(`✅ KLINE SUCCESS: ${message.s} ${message.k.i} - $${candlestickData.close}`);
+            // Add symbol for verification
+            (candlestickData as any).symbol = message.s;
+
+            console.log(`✅ LIVE KLINE: ${message.s} ${message.k.i} - $${candlestickData.close} @ ${new Date().toLocaleTimeString()}`);
             handler(candlestickData);
           } else {
-            console.error(`❌ NO HANDLER for ${handlerStreamName}! Available:`, Array.from(this.messageHandlers.keys()));
+            console.error(`❌ NO HANDLER for ${handlerStreamName}!`);
+            console.log(`📋 Available:`, Array.from(this.messageHandlers.keys()));
           }
         }
-        // Handle 24hr ticker messages for ALL crypto products
+        // Handle trade messages for real-time updates
+        else if (streamData.e === 'trade') {
+          const tradeMessage = streamData as BinanceTradeMessage;
+          const tradeStreamName = `${tradeMessage.s.toLowerCase()}@trade`;
+          
+          console.log(`⚡ TRADE: ${tradeMessage.s} - $${tradeMessage.p}`);
+          
+          // Handle kline handler (for chart updates)
+          const klineHandler = this.messageHandlers.get(tradeStreamName);
+          if (klineHandler) {
+            const tradePrice = parseFloat(tradeMessage.p);
+            const tradeVolume = parseFloat(tradeMessage.q);
+
+            const realtimeCandle: CandlestickData = {
+              timestamp: tradeMessage.T,
+              open: tradePrice,
+              high: tradePrice,
+              low: tradePrice,
+              close: tradePrice,
+              volume: tradeVolume
+            };
+
+            // Add symbol for verification
+            (realtimeCandle as any).symbol = tradeMessage.s;
+
+            console.log(`✅ TRADE SUCCESS: ${tradeMessage.s} - $${tradePrice}`);
+            klineHandler(realtimeCandle);
+          } else {
+            console.error(`❌ NO TRADE HANDLER for ${tradeStreamName}!`);
+          }
+
+          // Handle dedicated trade handlers (for live trades component)
+          const tradeHandler = this.tradeHandlers.get(tradeMessage.s);
+          if (tradeHandler) {
+            const tradeData: TradeData = {
+              id: tradeMessage.t,
+              price: tradeMessage.p,
+              quantity: tradeMessage.q,
+              timestamp: tradeMessage.T,
+              isBuyerMaker: tradeMessage.m
+            };
+            
+            // Add symbol to trade data for filtering
+            (tradeData as any).symbol = tradeMessage.s;
+            
+            console.log(`✅ LIVE TRADE: ${tradeMessage.s} - $${tradeMessage.p} @ ${new Date(tradeMessage.T).toLocaleTimeString()}`);
+            tradeHandler(tradeData);
+          } else {
+            console.warn(`⚠️ NO LIVE TRADE HANDLER for ${tradeMessage.s}`);
+          }
+        }
+        // Handle 24hr ticker messages (enhanced for multi-product support)
         else if (streamData.e === '24hrTicker') {
           const tickerMessage = streamData as any;
           const tickerStreamName = `${tickerMessage.s.toLowerCase()}@ticker`;
+
+          console.log(`💰 TICKER: ${tickerMessage.s} - $${tickerMessage.c} (${tickerMessage.P}%)`);
+
           const handler = this.messageHandlers.get(tickerStreamName);
 
           if (handler) {
             const currentPrice = parseFloat(tickerMessage.c);
+            const priceChange = parseFloat(tickerMessage.p);
+            const priceChangePercent = parseFloat(tickerMessage.P);
+
             const candlestickData: CandlestickData = {
               timestamp: tickerMessage.E,
-              open: currentPrice,
-              high: currentPrice,
-              low: currentPrice,
+              open: parseFloat(tickerMessage.o) || currentPrice,
+              high: parseFloat(tickerMessage.h) || currentPrice,
+              low: parseFloat(tickerMessage.l) || currentPrice,
               close: currentPrice,
               volume: parseFloat(tickerMessage.v) || 0
             };
 
-            console.log(`💰 LIVE ${tickerMessage.s} ticker: $${currentPrice}`);
+            // Add additional ticker data for multi-product grid
+            (candlestickData as any).symbol = tickerMessage.s;
+            (candlestickData as any).priceChange = priceChange;
+            (candlestickData as any).priceChangePercent = priceChangePercent;
+            (candlestickData as any).count = tickerMessage.n || 0;
+            (candlestickData as any).quoteVolume = parseFloat(tickerMessage.q) || 0;
+
+            console.log(`✅ TICKER SUCCESS: ${tickerMessage.s} - $${currentPrice} (${priceChangePercent >= 0 ? '+' : ''}${priceChangePercent.toFixed(2)}%)`);
+            handler(candlestickData);
+          }
+        }
+        // Handle miniTicker messages (more frequent updates)
+        else if (streamData.e === '24hrMiniTicker') {
+          const miniTickerMessage = streamData as any;
+          const miniTickerStreamName = `${miniTickerMessage.s.toLowerCase()}@miniticker`;
+
+          console.log(`⚡ MINI-TICKER: ${miniTickerMessage.s} - $${miniTickerMessage.c} (${miniTickerMessage.P}%)`);
+
+          const handler = this.messageHandlers.get(miniTickerStreamName);
+
+          if (handler) {
+            const currentPrice = parseFloat(miniTickerMessage.c);
+            const priceChangePercent = parseFloat(miniTickerMessage.P);
+
+            const candlestickData: CandlestickData = {
+              timestamp: miniTickerMessage.E,
+              open: parseFloat(miniTickerMessage.o) || currentPrice,
+              high: parseFloat(miniTickerMessage.h) || currentPrice,
+              low: parseFloat(miniTickerMessage.l) || currentPrice,
+              close: currentPrice,
+              volume: parseFloat(miniTickerMessage.v) || 0
+            };
+
+            // Add additional ticker data
+            (candlestickData as any).symbol = miniTickerMessage.s;
+            (candlestickData as any).priceChangePercent = priceChangePercent;
+            (candlestickData as any).quoteVolume = parseFloat(miniTickerMessage.q) || 0;
+
+            console.log(`✅ MINI-TICKER SUCCESS: ${miniTickerMessage.s} - $${currentPrice} (${priceChangePercent >= 0 ? '+' : ''}${priceChangePercent.toFixed(2)}%)`);
             handler(candlestickData);
           }
         }
@@ -452,47 +635,8 @@ export class WebSocketManager {
             handler(orderBookData);
           }
         }
-        // Handle trade messages for ALL crypto products with TradingView-like streaming
-        else if (streamData.e === 'trade') {
-          const tradeMessage = streamData as BinanceTradeMessage;
-          const tradeStreamName = `${tradeMessage.s.toLowerCase()}@trade`;
-          console.log(`⚡ Trade received: ${tradeMessage.s} - looking for handler: ${tradeStreamName}`);
-
-          const handler = this.messageHandlers.get(tradeStreamName);
-
-          if (handler) {
-            const tradePrice = parseFloat(tradeMessage.p);
-            const tradeVolume = parseFloat(tradeMessage.q);
-
-            // Create REAL-TIME candle from trade data for ALL crypto products
-            const realtimeCandle: CandlestickData = {
-              timestamp: tradeMessage.T,
-              open: tradePrice,
-              high: tradePrice,
-              low: tradePrice,
-              close: tradePrice,
-              volume: tradeVolume
-            };
-
-            console.log(`✅ TRADE SUCCESS: ${tradeMessage.s} - $${tradePrice} (Vol: ${tradeVolume})`);
-            handler(realtimeCandle);
-          } else {
-            console.error(`❌ NO TRADE HANDLER for ${tradeStreamName}! Available:`, Array.from(this.messageHandlers.keys()));
-          }
-
-          // Also handle in trade handlers for order book and trades view
-          const tradeHandler = this.tradeHandlers.get(tradeMessage.s);
-          if (tradeHandler) {
-            const tradeData: TradeData = {
-              id: tradeMessage.t,
-              price: tradeMessage.p,
-              quantity: tradeMessage.q,
-              timestamp: tradeMessage.T,
-              isBuyerMaker: tradeMessage.m
-            };
-            tradeHandler(tradeData);
-          }
-        }
+      } else {
+        console.warn('Unexpected message format:', data);
       }
     } catch (error) {
       console.error('Failed to parse WebSocket message:', error);

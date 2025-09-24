@@ -49,10 +49,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartRef = useRef<ChartJS>(null);
 
-  // Transform data for Chart.js - memoized to prevent unnecessary recalculations
-  const chartData = useMemo((): ChartData<'candlestick' | 'line'> => {
-    // Handle empty data case in memoized function
+  // Determine actual chart type for Chart.js (OHLC uses ohlc controller)
+  const actualChartType = chartType === 'ohlc' ? 'ohlc' : chartType === 'line' ? 'line' : 'candlestick';
+
+  // Transform data for Chart.js - supporting candlestick, line, and OHLC bar charts
+  const chartData = useMemo((): ChartData<'candlestick' | 'line' | 'ohlc'> => {
     const safeData = data || [];
+    console.log(`📊 Chart rendering ${safeData.length} candles for ${symbol}`);
 
     if (chartType === 'line') {
       return {
@@ -63,51 +66,63 @@ const PriceChart: React.FC<PriceChartProps> = ({
             x: item.timestamp,
             y: item.close
           })),
-          borderColor: COLORS.BULL,
-          backgroundColor: `${COLORS.BULL}20`,
+          borderColor: '#0ECB81', // Binance green
+          backgroundColor: 'rgba(14, 203, 129, 0.1)',
           borderWidth: 2,
           fill: false,
           tension: 0.1,
           pointRadius: 0,
           pointHoverRadius: 4,
-          pointBackgroundColor: COLORS.BULL,
+          pointBackgroundColor: '#0ECB81',
           pointBorderColor: '#ffffff',
-          pointBorderWidth: 2
+          pointBorderWidth: 1
         }]
       };
     } else {
+      // Both candlestick and OHLC use OHLC data format
       return {
         labels: safeData.map(item => new Date(item.timestamp)),
         datasets: [{
           label: symbol,
-          data: safeData.map(item => ({
-            x: item.timestamp,
-            o: item.open,
-            h: item.high,
-            l: item.low,
-            c: item.close
-          })),
+          data: safeData.map(item => {
+            // Ensure proper OHLC values to prevent rendering issues
+            const open = parseFloat(item.open.toString());
+            const high = parseFloat(item.high.toString());
+            const low = parseFloat(item.low.toString());
+            const close = parseFloat(item.close.toString());
+
+            // Validate OHLC relationships to fix rendering issues
+            const validHigh = Math.max(open, high, low, close);
+            const validLow = Math.min(open, high, low, close);
+
+            return {
+              x: item.timestamp,
+              o: open,
+              h: validHigh,
+              l: validLow,
+              c: close
+            };
+          }),
           borderColor: (ctx: any) => {
-            const { o, c } = ctx.parsed;
-            return c >= o ? COLORS.BULL : COLORS.BEAR;
+            const data = ctx.raw || {};
+            return data.c >= data.o ? '#0ECB81' : '#F6465D'; // Binance colors
           },
           backgroundColor: (ctx: any) => {
-            const { o, c } = ctx.parsed;
-            return c >= o ? `${COLORS.BULL}80` : `${COLORS.BEAR}80`;
+            const data = ctx.raw || {};
+            return data.c >= data.o ? 'rgba(14, 203, 129, 0.6)' : 'rgba(244, 70, 93, 0.6)';
           },
-          borderWidth: 1,
-          borderSkipped: false
+          borderWidth: chartType === 'ohlc' ? 2 : 1 // Thicker lines for OHLC bars
         }]
       };
     }
   }, [data, chartType, symbol]);
 
-  // Chart configuration - memoized to prevent recreating on every render
-  const chartOptions: ChartOptions<'candlestick' | 'line'> = useMemo(() => ({
+  // Chart configuration for all chart types
+  const chartOptions: ChartOptions<'candlestick' | 'line' | 'ohlc'> = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     interaction: {
-      mode: 'index',
+      mode: 'nearest',
       intersect: false,
     },
     plugins: {
@@ -115,39 +130,33 @@ const PriceChart: React.FC<PriceChartProps> = ({
         display: false
       },
       tooltip: {
-        mode: 'index',
+        enabled: true,
+        mode: 'nearest',
         intersect: false,
-        backgroundColor: 'rgba(0, 0, 0, 0.8)',
-        titleColor: '#ffffff',
-        bodyColor: '#ffffff',
-        borderColor: '#374151',
+        backgroundColor: 'rgba(11, 14, 17, 0.95)', // Binance dark
+        titleColor: '#EAECEF',
+        bodyColor: '#EAECEF',
+        borderColor: '#2B2F36',
         borderWidth: 1,
-        cornerRadius: 8,
+        cornerRadius: 4,
         displayColors: false,
         callbacks: {
           title: (context) => {
-            if (context[0]) {
-              return formatTimestamp(context[0].parsed.x, {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-              });
+            if (context[0] && context[0].parsed) {
+              return new Date((context[0].parsed as any).x).toLocaleString();
             }
             return '';
           },
           label: (context) => {
             if (chartType === 'line') {
-              return `Price: $${formatPrice(context.parsed.y)}`;
+              return `Price: $${formatPrice((context.parsed as any).y, 6)}`;
             } else {
               const data = context.raw as any;
               return [
-                `Open: $${formatPrice(data.o)}`,
-                `High: $${formatPrice(data.h)}`,
-                `Low: $${formatPrice(data.l)}`,
-                `Close: $${formatPrice(data.c)}`
+                `O: $${formatPrice(data.o, 6)}`,
+                `H: $${formatPrice(data.h, 6)}`,
+                `L: $${formatPrice(data.l, 6)}`,
+                `C: $${formatPrice(data.c, 6)}`
               ];
             }
           }
@@ -161,18 +170,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
           displayFormats: {
             second: 'HH:mm:ss',
             minute: 'HH:mm',
-            hour: 'MMM dd HH:mm',
-            day: 'MMM dd',
-            month: 'MMM yyyy'
+            hour: 'dd HH:mm',
+            day: 'MMM dd'
           }
         },
         grid: {
           display: true,
-          color: 'rgba(156, 163, 175, 0.2)'
+          color: 'rgba(43, 47, 54, 0.5)'
         },
         ticks: {
-          color: '#6b7280',
-          maxTicksLimit: 10
+          color: '#848E9C',
+          maxTicksLimit: 8,
+          font: {
+            size: 11
+          }
         }
       },
       y: {
@@ -180,12 +191,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
         position: 'right',
         grid: {
           display: true,
-          color: 'rgba(156, 163, 175, 0.2)'
+          color: 'rgba(43, 47, 54, 0.5)'
         },
         ticks: {
-          color: '#6b7280',
-          callback: function(value) {
-            return `$${formatPrice(value as number)}`;
+          color: '#848E9C',
+          font: {
+            size: 11
+          },
+          callback: function(value: any) {
+            const price = value as number;
+            return price < 1 ? `$${price.toFixed(6)}` : `$${price.toFixed(2)}`;
           }
         }
       }
@@ -193,12 +208,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     elements: {
       point: {
         radius: 0,
-        hoverRadius: 4
+        hoverRadius: 3
       }
     },
-    animation: {
-      duration: 0 // No animation for TradingView-like instant updates
-    },
+    animation: false, // Disable all animations for instant updates
     transitions: {
       active: {
         animation: {
@@ -212,7 +225,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           activeElements.length > 0 ? 'crosshair' : 'default';
       }
     }
-  }), [chartType, symbol]);
+  }), [chartType]);
 
   // Handle zoom changes - stable hook execution
   useEffect(() => {
@@ -235,11 +248,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
   }, [onZoomChange]);
 
-  // Force re-render when data changes - memoized logging
+  // Log live data updates for debugging
   useEffect(() => {
     if (data && data.length > 0) {
-      console.log(`📊 Chart data updated for ${symbol}:`, data.length, 'candles');
-      console.log('Last candle:', data[data.length - 1]);
+      const lastCandle = data[data.length - 1];
+      console.log(`📊 CHART UPDATE: ${symbol} - ${data.length} candles - Latest: $${lastCandle.close} @ ${new Date(lastCandle.timestamp).toLocaleTimeString()}`);
     }
   }, [data, symbol]);
 
@@ -275,15 +288,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
     );
   }
 
+  // Render the chart with proper type
   return (
     <div className="chart-container p-4">
       <div className="h-96 relative">
         <Chart
           ref={chartRef}
-          type={chartType as any}
+          type={actualChartType as any}
           data={chartData}
           options={chartOptions as any}
-          key={`${symbol}-${chartType}-${data.length}`} // Force re-render on data change
+          key={`${symbol}-${chartType}-${data?.length || 0}`} // Force re-render on data change
         />
       </div>
     </div>

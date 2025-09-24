@@ -128,20 +128,21 @@ const Dashboard: React.FC = () => {
 
     console.log(`🔄 BINANCE: Switching to ${pair.displayName} (${pair.symbol})`);
 
+    // CRITICAL: Clear old chart data immediately when switching products
+    console.log(`🧹 Clearing old ${selectedPair.symbol} chart data`);
+    setData([]); // Clear chart data to prevent BTC showing on ETH charts
+    
     setSelectedPair(pair);
     loadChartData(pair, selectedInterval);
 
     // Immediately fetch market stats for the new crypto
     updateMarketStats(pair.symbol);
 
-    // Update URL for deep linking
-    updateURLParams({
-      symbol: pair.symbol,
-      interval: selectedInterval
-    });
+    // DON'T update URL parameters - keep clean URLs
+    // updateURLParams({ symbol: pair.symbol, interval: selectedInterval });
 
     console.log(`✅ Successfully switched to ${pair.symbol} ${selectedInterval}`);
-  }, [selectedPair.symbol, selectedInterval, loadChartData, updateURLParams, updateMarketStats]);
+  }, [selectedPair.symbol, selectedInterval, loadChartData, updateMarketStats, setData]);
 
   // Handle timeframe switching (1s, 5s, 1m, 5m, 15m, 1h, 4h, 1d)
   const handleIntervalChange = useCallback((interval: string) => {
@@ -152,17 +153,14 @@ const Dashboard: React.FC = () => {
     setSelectedInterval(interval);
     loadChartData(selectedPair, interval);
 
-    // Update URL for deep linking
-    updateURLParams({
-      symbol: selectedPair.symbol,
-      interval: interval
-    });
+    // DON'T update URL parameters - keep clean URLs
+    // updateURLParams({ symbol: selectedPair.symbol, interval: interval });
 
     console.log(`✅ Successfully switched to ${selectedPair.symbol} ${interval}`);
-  }, [selectedInterval, selectedPair, loadChartData, updateURLParams]);
+  }, [selectedInterval, selectedPair, loadChartData]);
 
   // Handle chart type change
-  const handleChartTypeChange = useCallback((type: 'candlestick' | 'line') => {
+  const handleChartTypeChange = useCallback((type: 'candlestick' | 'line' | 'ohlc') => {
     setChartType(type);
   }, [setChartType]);
 
@@ -192,11 +190,11 @@ const Dashboard: React.FC = () => {
       loadChartData(currentPair, currentInterval);
       isInitializedRef.current = true;
 
-      // Update URL to reflect current state
-      updateURLParams({
-        symbol: currentPair.symbol,
-        interval: currentInterval
-      });
+      // DON'T update URL parameters - keep clean URLs
+      // updateURLParams({
+      //   symbol: currentPair.symbol,
+      //   interval: currentInterval
+      // });
     }
   }, []);  // Only run once on mount
 
@@ -210,11 +208,11 @@ const Dashboard: React.FC = () => {
     // Update market stats immediately when switching products
     updateMarketStats(selectedPair.symbol);
 
-    // Update URL parameters
-    updateURLParams({
-      symbol: selectedPair.symbol,
-      interval: selectedInterval
-    });
+    // DON'T update URL parameters - keep clean URLs
+    // updateURLParams({
+    //   symbol: selectedPair.symbol,
+    //   interval: selectedInterval
+    // });
   }, [selectedPair.symbol, selectedInterval]);
 
   // Separate effect for WebSocket subscription management

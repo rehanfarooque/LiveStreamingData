@@ -62,7 +62,7 @@ export interface BinanceKlineMessage {
 
 export interface ChartProps {
   data: CandlestickData[];
-  chartType: 'candlestick' | 'line';
+  chartType: 'candlestick' | 'line' | 'ohlc';
   isLoading: boolean;
   onZoomChange?: (zoomLevel: number) => void;
 }
@@ -107,11 +107,11 @@ export interface UserPreferencesContextType {
   theme: 'light' | 'dark';
   defaultPair: TradingPair;
   defaultInterval: string;
-  chartType: 'candlestick' | 'line';
+  chartType: 'candlestick' | 'line' | 'ohlc';
   setTheme: (theme: 'light' | 'dark') => void;
   setDefaultPair: (pair: TradingPair) => void;
   setDefaultInterval: (interval: string) => void;
-  setChartType: (type: 'candlestick' | 'line') => void;
+  setChartType: (type: 'candlestick' | 'line' | 'ohlc') => void;
 }
 
 export type TimeInterval = '1s' | '5s' | '1m' | '5m' | '15m' | '1h' | '4h' | '1d';

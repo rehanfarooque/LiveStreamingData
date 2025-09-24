@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, ReactNode, use
 import { ChartDataContextType, CandlestickData } from '@/types';
 import { webSocketManager } from '@/services/websocketManager';
 import { fallbackWebSocketManager } from '@/services/fallbackWebSocket';
+import { enhancedWebSocketManager } from '@/services/enhancedWebSocketManager';
 
 const ChartDataContext = createContext<ChartDataContextType | undefined>(undefined);
 
@@ -14,8 +15,8 @@ export function ChartDataProvider({ children }: ChartDataProviderProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [currentSubscription, setCurrentSubscription] = useState<{symbol: string, interval: string} | null>(null);
-  const [isUsingFallback, setIsUsingFallback] = useState(false);
-  const [fallbackAttempts, setFallbackAttempts] = useState(0);
+  // const [isUsingFallback, setIsUsingFallback] = useState(false);
+  // const [fallbackAttempts, setFallbackAttempts] = useState(0);
   const [lastPrice, setLastPrice] = useState<number>(0);
   const [updateTimer, setUpdateTimer] = useState<NodeJS.Timeout | null>(null);
 
@@ -34,223 +35,206 @@ export function ChartDataProvider({ children }: ChartDataProviderProps) {
     return intervalMap[interval] || 60000;
   }, []);
 
-  // Update chart data with REAL-TIME streaming like TradingView
-  const updateData = useCallback((newCandle: CandlestickData) => {
+  // UNIVERSAL UPDATE SYSTEM: Handle ALL cryptocurrencies and ALL timeframes (1s, 5s, 1m, 5m, 15m, 1h, 4h, 1d)
+  const updateData = useCallback((newCandle: CandlestickData, interval: string) => {
     // Store the latest price for interpolation
     setLastPrice(newCandle.close);
 
     setCandlestickData(prevData => {
       // If we have no previous data, start with the new candle
       if (prevData.length === 0) {
-        console.log('🚀 Starting LIVE chart with first trade:', newCandle.close);
+        console.log(`🚀 UNIVERSAL START: ${interval} chart with first trade: $${newCandle.close}`);
         return [newCandle];
       }
 
       const updatedData = [...prevData];
       const lastCandle = updatedData[updatedData.length - 1];
+      const intervalMs = getIntervalMs(interval);
 
-      // BINANCE-STYLE REAL-TIME UPDATES for ALL crypto products and timeframes
-      const now = Date.now();
-      const timeDiff = Math.abs(newCandle.timestamp - lastCandle.timestamp);
-      const isNewCandle = newCandle.timestamp > lastCandle.timestamp + 500; // 500ms buffer
+      // SPECIAL HANDLING: 5s aggregation from 1s data
+      let effectiveIntervalMs = intervalMs;
+      if (interval === '5s') {
+        // For 5s charts, we aggregate from 1s trade data
+        effectiveIntervalMs = 5000;
+        console.log(`🔄 5s AGGREGATION: Converting 1s trade data to 5s candles`);
+      }
+
+      // UNIVERSAL BINANCE-STYLE REAL-TIME UPDATES for ALL timeframes and cryptocurrencies
+      const candleStart = Math.floor(newCandle.timestamp / effectiveIntervalMs) * effectiveIntervalMs;
+      const lastCandleStart = Math.floor(lastCandle.timestamp / effectiveIntervalMs) * effectiveIntervalMs;
+
+      const isNewCandle = candleStart > lastCandleStart;
 
       if (isNewCandle) {
-        // NEW CANDLE: Add to chart (Binance behavior)
-        updatedData.push({
-          timestamp: newCandle.timestamp,
+        // NEW CANDLE: Add to chart (Universal behavior for ALL 50+ cryptocurrencies)
+        const newCandleData = {
+          timestamp: candleStart,
           open: newCandle.open || newCandle.close,
           high: newCandle.high || newCandle.close,
           low: newCandle.low || newCandle.close,
           close: newCandle.close,
           volume: newCandle.volume || 0
-        });
-        console.log(`📈 NEW BINANCE candle: $${newCandle.close} at ${new Date(newCandle.timestamp).toLocaleTimeString()}`);
+        };
 
-        // Keep last 200 candles for all crypto products
-        if (updatedData.length > 200) {
-          updatedData.splice(0, updatedData.length - 200);
+        updatedData.push(newCandleData);
+        console.log(`🌟 NEW ${interval} UNIVERSAL CANDLE: $${newCandle.close} at ${new Date(candleStart).toLocaleTimeString()}`);
+
+        // Keep appropriate number of candles based on timeframe
+        const maxCandles = ['1s', '5s'].includes(interval) ? 300 :
+                          ['1m', '5m'].includes(interval) ? 500 :
+                          ['15m', '1h'].includes(interval) ? 1000 : 2000;
+
+        if (updatedData.length > maxCandles) {
+          updatedData.splice(0, updatedData.length - maxCandles);
         }
       } else {
-        // UPDATE CURRENT CANDLE: Real-time price movement (like Binance)
+        // UPDATE CURRENT CANDLE: Real-time price movement for ALL timeframes and cryptocurrencies
         const currentCandle = updatedData[updatedData.length - 1];
-        updatedData[updatedData.length - 1] = {
+        const updatedCandle = {
           timestamp: currentCandle.timestamp,
           open: currentCandle.open,
           high: Math.max(currentCandle.high, newCandle.close, newCandle.high || 0),
-          low: Math.min(currentCandle.low, newCandle.close, newCandle.low || Infinity),
-          close: newCandle.close, // Latest trade price
+          low: Math.min(currentCandle.low, newCandle.close, newCandle.low || currentCandle.low),
+          close: newCandle.close, // Latest trade price - UNIVERSAL REAL-TIME UPDATE
           volume: Math.max(currentCandle.volume, newCandle.volume || 0)
         };
-        console.log(`⚡ LIVE ${updatedData.length > 0 ? 'UPDATE' : 'TRADE'}: $${newCandle.close}`);
+
+        updatedData[updatedData.length - 1] = updatedCandle;
+        console.log(`⚡ UNIVERSAL ${interval} UPDATE: $${newCandle.close} (${updatedData.length} candles)`);
       }
 
       return updatedData;
     });
 
-    // Clear any existing errors only if there are errors
-    setError(prevError => prevError ? null : prevError);
-  }, []);  // Remove error dependency to prevent loops
+    // Clear any existing errors
+    setError(null);
+  }, [getIntervalMs]);
 
   // Create Binance-style candle for ANY crypto product and timeframe
-  const createBinanceCandle = useCallback((symbol: string, interval: string): CandlestickData => {
+  const createBinanceCandle = useCallback((interval: string, price?: number): CandlestickData => {
     const now = Date.now();
     const intervalMs = getIntervalMs(interval);
+    const currentPrice = price || lastPrice || 0;
 
-    // Calculate Binance-style candle start time for ANY timeframe
-    let startTime: number;
-
-    switch (interval) {
-      case '1s':
-        startTime = Math.floor(now / 1000) * 1000;
-        break;
-      case '5s':
-        startTime = Math.floor(now / 5000) * 5000;
-        break;
-      case '1m':
-        startTime = Math.floor(now / 60000) * 60000;
-        break;
-      case '5m':
-        startTime = Math.floor(now / 300000) * 300000;
-        break;
-      case '15m':
-        startTime = Math.floor(now / 900000) * 900000;
-        break;
-      case '1h':
-        startTime = Math.floor(now / 3600000) * 3600000;
-        break;
-      case '4h':
-        startTime = Math.floor(now / 14400000) * 14400000;
-        break;
-      case '1d':
-        startTime = Math.floor(now / 86400000) * 86400000;
-        break;
-      default:
-        startTime = Math.floor(now / intervalMs) * intervalMs;
-    }
+    // Calculate precise Binance-style candle start time for ANY timeframe
+    const startTime = Math.floor(now / intervalMs) * intervalMs;
 
     return {
       timestamp: startTime,
-      open: lastPrice || 0,
-      high: lastPrice || 0,
-      low: lastPrice || 0,
-      close: lastPrice || 0,
+      open: currentPrice,
+      high: currentPrice,
+      low: currentPrice,
+      close: currentPrice,
       volume: 0
     };
   }, [lastPrice, getIntervalMs]);
 
-  // Start Binance-style streaming for ALL crypto products and timeframes
-  const startBinanceStreaming = useCallback((symbol: string, interval: string) => {
+  // UNIVERSAL Binance streaming - works for ALL cryptocurrencies and ALL timeframes
+  const startUniversalStreaming = useCallback((symbol: string, interval: string) => {
     // Clear existing timer
     if (updateTimer) {
       clearInterval(updateTimer);
       setUpdateTimer(null);
     }
 
-    // Binance-style: Different update strategies per timeframe
-    let safetyIntervalMs: number;
+    if (lastPrice > 0) {
+      // Universal streaming for ALL timeframes and ALL cryptocurrencies
+      const intervalMs = getIntervalMs(interval);
+      let updateFrequency: number;
 
-    if (['1s', '5s'].includes(interval)) {
-      // Ultra-fast timeframes: Very frequent safety updates
-      safetyIntervalMs = 1000; // 1 second safety
-    } else if (['1m', '5m'].includes(interval)) {
-      // Medium timeframes: Regular safety updates
-      safetyIntervalMs = 5000; // 5 second safety
-    } else {
-      // Longer timeframes: Less frequent safety updates
-      safetyIntervalMs = Math.min(getIntervalMs(interval) / 4, 30000); // Max 30 seconds
-    }
-
-    console.log(`🚀 BINANCE STREAMING: ${symbol} ${interval} (safety: ${safetyIntervalMs}ms)`);
-
-    const timer = setInterval(() => {
-      if (lastPrice > 0) {
-        const currentCandle = createBinanceCandle(symbol, interval);
-        console.log(`🔄 Binance safety: ${symbol} ${currentCandle.close}`);
-        updateData(currentCandle);
+      // Set update frequency based on timeframe for smooth streaming
+      if (interval === '1s') {
+        updateFrequency = 1000; // Every second for 1s charts
+      } else if (interval === '5s') {
+        updateFrequency = 2000; // Every 2 seconds for 5s charts
+      } else if (interval === '1m') {
+        updateFrequency = 3000; // Every 3 seconds for 1m charts
+      } else if (interval === '5m') {
+        updateFrequency = 10000; // Every 10 seconds for 5m charts
+      } else if (interval === '15m') {
+        updateFrequency = 30000; // Every 30 seconds for 15m charts
+      } else if (interval === '1h') {
+        updateFrequency = 60000; // Every minute for 1h charts
+      } else if (interval === '4h') {
+        updateFrequency = 120000; // Every 2 minutes for 4h charts
+      } else { // 1d and longer
+        updateFrequency = 300000; // Every 5 minutes for daily charts
       }
-    }, safetyIntervalMs);
 
-    setUpdateTimer(timer);
-  }, [updateTimer, getIntervalMs, lastPrice, createBinanceCandle, updateData]);
+      console.log(`🌟 UNIVERSAL STREAMING: ${symbol} ${interval} - ${updateFrequency}ms updates`);
 
-  // Subscribe to WebSocket updates with fallback mechanism
+      const timer = setInterval(() => {
+        if (lastPrice > 0) {
+          // Create realistic price movement based on volatility
+          const baseVolatility = 0.0001; // Base 0.01% movement
+          const timeMultiplier = updateFrequency / 1000; // Scale by time
+          const volatility = baseVolatility * Math.sqrt(timeMultiplier); // More movement for longer intervals
+
+          const priceChange = (Math.random() - 0.5) * volatility * 2; // ±volatility
+          const newPrice = Math.max(0.00000001, lastPrice * (1 + priceChange));
+
+          const currentCandle = createBinanceCandle(interval, newPrice);
+
+          // Add some volume variation
+          currentCandle.volume = Math.max(0, currentCandle.volume + (Math.random() - 0.5) * 1000);
+
+          console.log(`⚡ ${symbol} ${interval}: $${newPrice.toFixed(8)} (${(priceChange * 100).toFixed(4)}%)`);
+          updateData(currentCandle, interval);
+        }
+      }, updateFrequency);
+
+      setUpdateTimer(timer);
+    } else {
+      console.log(`⏳ ${symbol} ${interval}: Waiting for initial price data`);
+    }
+  }, [updateTimer, lastPrice, createBinanceCandle, updateData, getIntervalMs]);
+
+  // UNIVERSAL BINANCE STREAMING: Subscribe to real-time WebSocket streams for ALL cryptocurrencies
   const subscribeToUpdates = useCallback((symbol: string, interval: string) => {
-    // Prevent duplicate subscriptions
-    if (currentSubscription &&
-        currentSubscription.symbol === symbol &&
-        currentSubscription.interval === interval) {
-      console.log(`🔄 Already subscribed to ${symbol} ${interval}`);
-      return;
+    console.log(`🌟 UNIVERSAL STREAMING: Setting up ${symbol} ${interval} (Binance-compatible)`);
+
+    // Clear old data when switching symbols
+    if (currentSubscription && currentSubscription.symbol !== symbol) {
+      console.log(`🧹 Clearing ${currentSubscription.symbol} data, switching to ${symbol}`);
+      setCandlestickData([]);
+      setLastPrice(0);
     }
 
-    console.log(`🎯 Setting up real-time updates for ${symbol} ${interval}`);
-
-    // Clear any existing timer
+    // Clear existing timer
     if (updateTimer) {
       clearInterval(updateTimer);
       setUpdateTimer(null);
     }
 
-    // Unsubscribe from previous stream if exists
-    if (currentSubscription) {
-      console.log(`🔄 Unsubscribing from previous: ${currentSubscription.symbol} ${currentSubscription.interval}`);
-      if (isUsingFallback) {
-        fallbackWebSocketManager.disconnect(`${currentSubscription.symbol.toLowerCase()}@kline_${currentSubscription.interval}`);
-      } else {
-        webSocketManager.unsubscribe(currentSubscription.symbol, currentSubscription.interval);
-      }
-    }
+    // Track new subscription
+    const newSubscription = { symbol, interval };
+    let streamingStarted = false;
 
-    let binanceStreamingStarted = false;
-
-    console.log(`🎯 SETTING UP SUBSCRIPTION: ${symbol} ${interval}`);
+    console.log(`🎯 BINANCE SUBSCRIPTION: ${symbol} ${interval}`);
 
     const dataHandler = (newCandle: CandlestickData) => {
-      console.log(`✅ DATA SUCCESS: ${symbol} ${interval} = $${newCandle.close}`);
-      updateData(newCandle);
-      setError(null); // Clear any previous errors on successful data
-
-      // Start Binance-style streaming for ALL products and timeframes
-      if (!binanceStreamingStarted) {
-        console.log(`🚀 Starting streaming for ${symbol} ${interval}`);
-        startBinanceStreaming(symbol, interval);
-        binanceStreamingStarted = true;
+      // Verify symbol matches (accept all supported cryptocurrencies)
+      const candleSymbol = (newCandle as any).symbol;
+      if (candleSymbol && candleSymbol !== symbol) {
+        console.warn(`⚠️ REJECTED: ${candleSymbol} != ${symbol}`);
+        return;
       }
+
+      console.log(`🎯 LIVE UPDATE: ${symbol} ${interval} = $${newCandle.close} @ ${new Date().toLocaleTimeString()}`);
+      updateData(newCandle, interval);
+      setError(null);
+      
+      // Update last price for reference but DO NOT start simulation
+      setLastPrice(newCandle.close);
     };
 
-    // Try main WebSocket manager first
-    if (!isUsingFallback && fallbackAttempts < 3) {
-      console.log('🚀 Using main WebSocket manager');
+    // Subscribe to ENHANCED WebSocket for ALL crypto products real-time streaming
+    console.log(`🚀 ENHANCED SUBSCRIBING: ${symbol} ${interval} - Starting MULTI-PRODUCT WebSocket connection`);
+    enhancedWebSocketManager.subscribeMultiProduct(symbol, interval, dataHandler);
 
-      // Set up error detection timeout
-      const errorTimeout = setTimeout(() => {
-        if (!webSocketManager.isConnected()) {
-          console.warn('⚠️ Main WebSocket failed, switching to fallback...');
-          setIsUsingFallback(true);
-          setFallbackAttempts(prev => prev + 1);
-
-          // Use fallback
-          fallbackWebSocketManager.subscribe(symbol, interval, dataHandler);
-        }
-      }, 15000); // Wait 15 seconds for connection
-
-      webSocketManager.subscribe(symbol, interval, dataHandler);
-
-      // Clear timeout if connection succeeds
-      setTimeout(() => {
-        if (webSocketManager.isConnected()) {
-          clearTimeout(errorTimeout);
-        }
-      }, 2000);
-
-    } else {
-      console.log('🔄 Using fallback WebSocket manager');
-      setIsUsingFallback(true);
-      fallbackWebSocketManager.subscribe(symbol, interval, dataHandler);
-    }
-
-    setCurrentSubscription({ symbol, interval });
-  }, [updateData, isUsingFallback, fallbackAttempts, updateTimer, startBinanceStreaming]);
+    setCurrentSubscription(newSubscription);
+    console.log(`✅ SUBSCRIBED: ${symbol} ${interval} - Waiting for live data...`);
+  }, [updateData, updateTimer, startUniversalStreaming, currentSubscription]);
 
   // Set initial chart data (replace completely when switching symbols)
   const setData = useCallback((data: CandlestickData[]) => {
@@ -280,7 +264,7 @@ export function ChartDataProvider({ children }: ChartDataProviderProps) {
   useEffect(() => {
     return () => {
       if (currentSubscription) {
-        webSocketManager.unsubscribe(currentSubscription.symbol, currentSubscription.interval);
+        enhancedWebSocketManager.unsubscribeProduct(currentSubscription.symbol, currentSubscription.interval);
       }
       if (updateTimer) {
         clearInterval(updateTimer);

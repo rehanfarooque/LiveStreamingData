@@ -8,10 +8,10 @@ import { SUPPORTED_PAIRS, SUPPORTED_INTERVALS } from '@/utils/constants';
 interface ControlPanelProps {
   selectedPair: TradingPair;
   selectedInterval: string;
-  chartType: 'candlestick' | 'line';
+  chartType: 'candlestick' | 'line' | 'ohlc';
   onPairChange: (pair: TradingPair) => void;
   onIntervalChange: (interval: string) => void;
-  onChartTypeChange: (type: 'candlestick' | 'line') => void;
+  onChartTypeChange: (type: 'candlestick' | 'line' | 'ohlc') => void;
 }
 
 const ControlPanel: React.FC<ControlPanelProps> = ({

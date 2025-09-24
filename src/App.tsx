@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import Layout from '@/components/Layout';
-import Dashboard from '@/components/Dashboard';
+import EnhancedDashboard from '@/components/EnhancedDashboard';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import {
   WebSocketProvider,
@@ -11,7 +11,7 @@ import {
 function App() {
   useEffect(() => {
     // Set document title
-    document.title = 'Crypto Chart Dashboard';
+    document.title = 'Multi-Product Crypto Trading Dashboard | Real-time Data';
     
     // Handle URL parameters for deep linking
     const urlParams = new URLSearchParams(window.location.search);
@@ -38,13 +38,8 @@ function App() {
 
   // Handle browser back/forward navigation
   useEffect(() => {
-    const handlePopState = (event: PopStateEvent) => {
-      // Handle back/forward navigation
-      const urlParams = new URLSearchParams(window.location.search);
-      const symbol = urlParams.get('symbol');
-      const interval = urlParams.get('interval');
-      
-      // Trigger re-render with new parameters
+    const handlePopState = () => {
+      // Handle back/forward navigation and trigger re-render
       window.location.reload();
     };
 
@@ -58,7 +53,7 @@ function App() {
         <WebSocketProvider>
           <ChartDataProvider>
             <Layout>
-              <Dashboard />
+              <EnhancedDashboard />
             </Layout>
           </ChartDataProvider>
         </WebSocketProvider>

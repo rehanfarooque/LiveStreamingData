@@ -149,7 +149,9 @@ export const getPairFromSymbol = (symbol: string): { base: string; quote: string
  * Generate WebSocket stream name
  */
 export const generateStreamName = (symbol: string, interval: string): string => {
-  return `${symbol.toLowerCase()}@kline_${interval}`;
+  // Ensure 5s interval is properly formatted as 5s (not 5sec)
+  const normalizedInterval = interval === '5sec' ? '5s' : interval;
+  return `${symbol.toLowerCase()}@kline_${normalizedInterval}`;
 };
 
 /**
